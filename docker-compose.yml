@@ -1,0 +1,143 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: apache/kafka
+    container_name: payments_kafka
+    hostname: payments_kafka
+    ports:
+      - "9092:9092"
+    restart: always
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:9093,PLAINTEXT://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://payments_kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@payments_kafka:9093"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_LOG_DIRS: "/tmp/kafka-data"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "payments_kafka:9092"]
+      interval: 10s
+      timeout: 20s
+      retries: 10
+    volumes:
+      - payments_kafka_data:/tmp/kafka/data #пишется в tmp из-за прав доступа
+    networks:
+      - payments-net
+
+  akhq:
+    image: tchiotludo/akhq
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            kraft-kafka:
+              properties:
+                bootstrap.servers: "payments_kafka:9092"  # Используем внутренний адрес
+                security.protocol: PLAINTEXT
+              options:
+                topics:
+                  regex: ".*"  # Разрешить все топики
+    networks:
+      - payments-net
+  redis:
+    image: redis:7.2-alpine
+    container_name: payments_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass yourpassword
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - payments-net
+
+  postgres:
+    container_name: payments_postgres
+    image: postgres:14-alpine
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "payments"
+      POSTGRES_USER: "postgres"
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - payments-net
+    volumes:
+      - payments_pgdata:/var/lib/postgresql/data
+
+
+  api:
+    container_name: payments_payment_api
+    build: ./payment_api
+    image: payments_api:latest
+    ports:
+      - "8000:8000"
+    restart: always
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      REDIS_HOST: "redis"
+      POSTGRES_URL: "postgres://postgres:postgres@postgres/payments"
+    depends_on:
+      - kafka
+      - redis
+      - postgres
+    networks:
+      - payments-net
+
+  fraud_detection:
+    container_name: payments_fraud_detection
+    build: ./fraud_detection
+    image: payments_fraud_detection:latest
+    restart: always
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+    depends_on:
+      - kafka
+    networks:
+      - payments-net
+
+  analytics:
+    container_name: payments_analytics
+    build: ./analytics
+    image: payments_analytics:latest
+    restart: always
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      POSTGRES_URL: "postgres://postgres:postgres@postgres/payments"
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - payments-net
+
+volumes:
+  payments_kafka_data:
+    name: payments_kafka_data
+  payments_pgdata:
+    name: payments_postgres_data
+    # нужен ли volume для redis?
+
+networks:
+  payments-net:
+    name: payments_network
+    driver: bridge
