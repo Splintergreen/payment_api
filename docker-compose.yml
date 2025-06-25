@@ -33,6 +33,7 @@ services:
 
   akhq:
     image: tchiotludo/akhq
+    container_name: payments_akhq
     depends_on:
       - kafka
     ports:
@@ -62,6 +63,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    volumes:
+      - payments_redis_data:/data
     networks:
       - payments-net
 
@@ -130,12 +133,63 @@ services:
     networks:
       - payments-net
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"  # AMQP порт
+      - "15672:15672"  # Web UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=admin
+    volumes:
+      - payments_rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - payments-net
+
+  elasticsearch:
+    image: elasticsearch:8.12.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      - xpack.security.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - payments_es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - payments-net
+
+
+  kibana:
+    image: kibana:8.12.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - payments-net
+
+
 volumes:
   payments_kafka_data:
     name: payments_kafka_data
   payments_pgdata:
     name: payments_postgres_data
-    # нужен ли volume для redis?
+  payments_redis_data:
+    name: payments_redis_data
+  payments_rabbitmq_data:
+    name: payments_rabbitmq_data
+  payments_es_data:
+    name: payments_es_data
 
 networks:
   payments-net:
