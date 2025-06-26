@@ -1,6 +1,6 @@
 import json
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy import insert, MetaData, Table, Column, Integer, String, DECIMAL, DateTime
+from sqlalchemy import insert, MetaData, Table, Column, Integer, String, DECIMAL, DateTime, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from aiokafka import AIOKafkaConsumer
 import asyncio
@@ -48,7 +48,8 @@ class PaymentAnalytics:
                     Column('card_mask', String(4), nullable=False),
                     Column('status', String(20), nullable=False),
                     Column('send_at', DateTime),
-                    Column('created_at', DateTime)
+                    Column('created_at', DateTime),
+                    Column('fraud', Boolean, default=False)
                 )
 
                 self.engine = create_async_engine(
@@ -103,7 +104,7 @@ class PaymentAnalytics:
                     card_mask=payment['card_mask'],
                     status='completed',
                     send_at=datetime.strptime(payment['send_at'], '%Y-%m-%d %H:%M:%S'),
-                    created_at=datetime.now()
+                    created_at=datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
                 )
                 await session.execute(query)
                 await session.commit()
