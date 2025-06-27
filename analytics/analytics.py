@@ -7,6 +7,7 @@ import asyncio
 import logging
 from typing import Dict, Any
 from datetime import datetime
+from rabbit_logging import logging_service
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +33,37 @@ class PaymentAnalytics:
         self.transactions = None
         self.consumer = None
         self.running = False
+        self.rabbit_connected = False
+
+    async def init_rabbit(self):
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                await logging_service.connect()
+                self.rabbit_connected = True
+                logger.info('Успешное подключение к RabbitMQ')
+                return
+            except Exception as e:
+                logger.error(f'Попытка {attempt}/{max_retries} подключения к RabbitMQ не удалась: {str(e)}')
+                if attempt < max_retries:
+                    await asyncio.sleep(2)
+        raise ConnectionError('Не удалось подключиться к RabbitMQ')
+
+    async def log_event(self, level: str, message: str, request_id: str, **extra):
+        if not self.rabbit_connected:
+            logger.warning('RabbitMQ не подключен, логи не будут отправлены')
+            return
+
+        try:
+            await logging_service.log(
+                level=level,
+                message=message,
+                request_id=request_id,
+                service='analytics',
+                **extra
+            )
+        except Exception as e:
+            logger.error(f'Ошибка отправки лога в RabbitMQ: {str(e)}')
 
     async def init_db(self) -> None:
         max_retries = 5
@@ -104,12 +136,13 @@ class PaymentAnalytics:
                     card_mask=payment['card_mask'],
                     status='completed',
                     send_at=datetime.strptime(payment['send_at'], '%Y-%m-%d %H:%M:%S'),
-                    created_at=datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
+                    created_at=datetime.strptime(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
                 )
                 await session.execute(query)
                 await session.commit()
 
             logger.info('Платеж успешно записан в БД!')
+            await self.log_event('INFO', 'Платеж успешно записан в БД', payment['request_id'], payment_id=payment['payment_id'])
         except Exception as e:
             logger.error(f'Ошибка при проведении платежа: {str(e)}')
             raise PaymentErrorExeption('Ошибка при проведении платежа!')
@@ -131,6 +164,7 @@ class PaymentAnalytics:
     async def run(self) -> None:
         self.running = True
         try:
+            await self.init_rabbit()
             await self.init_db()
             self.consumer = await self.create_kafka_consumer()
             logger.info('Сервис Аналитики запущен!')
@@ -138,7 +172,7 @@ class PaymentAnalytics:
         except asyncio.CancelledError:
             logger.info('Сервис Аналитики останавливается!')
         except Exception as e:
-            logger.critical(f'Ошибка запуска сервиса: {str(e)}', exc_info=True)
+            logger.critical(f' {str(e)}', exc_info=True)
         finally:
             self.running = False
             await self.cleanup()
@@ -150,6 +184,13 @@ class PaymentAnalytics:
                 logger.info('Консьюмер analytic-group остановлен!')
             except Exception as e:
                 logger.error(f'Ошибка при остановке консьюмера analytic-group: {str(e)}')
+
+        if self.rabbit_connected:
+            try:
+                await logging_service.close()
+                logger.info('Отключение от RabbitMQ выполнено')
+            except Exception as e:
+                logger.error(f'Ошибка при отключении от Rabbit: {str(e)}')
 
         if self.engine:
             try:

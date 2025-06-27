@@ -28,12 +28,13 @@ class LoggingService:
         if self.connection:
             await self.connection.close()
 
-    async def log(self, level: str, message: str, request_id: Optional[str] = None, **extra):
+    async def log(self, level: str, message: str, service: str, request_id: Optional[str] = None, **extra):
         log_data = {
             'timestamp': datetime.utcnow().isoformat(),
             'level': level,
             'message': message,
-            'service': 'payments',
+            # 'service': 'payments',
+            'service': service,
             **extra
         }
 

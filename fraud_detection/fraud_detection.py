@@ -6,6 +6,7 @@ from sqlalchemy import update, Table, Column, Boolean, UUID, MetaData, String
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
+from rabbit_logging import logging_service
 
 logging.basicConfig(
     level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s'
@@ -33,6 +34,19 @@ transactions = Table(
 )
 
 
+async def log_event(level: str, message: str, request_id: str, **extra):
+    try:
+        await logging_service.log(
+            level=level,
+            message=message,
+            request_id=request_id,
+            service='fraud_service',
+            **extra
+        )
+    except Exception as e:
+        logger.error(f'Ошибка подключения к Rabbit: {str(e)}')
+
+
 async def update_fraud_status(payment_id: str):
     async with AsyncSessionLocal() as session:
         try:
@@ -55,6 +69,7 @@ async def process_payment(payment: dict):
     try:
         payment_id = payment.get('payment_id')
         amount = payment.get('amount', 0)
+        request_id = payment.get('request_id')
 
         is_fraud = False
         fraud_reason = None
@@ -68,9 +83,11 @@ async def process_payment(payment: dict):
 
         if is_fraud:
             logger.warning(f'Выявлен фрод: {fraud_reason}. Платеж: {payment}')
+            await log_event('INFO', f'Выявлен фрод: {fraud_reason}!', request_id=request_id, payment_id=payment_id)
             await update_fraud_status(payment_id)
         else:
             logger.info(f'Платеж {payment_id} проверен, фрод не обнаружен.')
+            await log_event('INFO', 'Фрод не обнаружен.', request_id=request_id, payment_id=payment_id)
 
     except Exception as e:
         logger.error(f'Ошибка при обработке платежа: {e}')
@@ -101,7 +118,18 @@ async def consume_messages():
 
 
 async def main():
-    await consume_messages()
+    try:
+        await logging_service.connect()
+        logger.info('Подключен к  Rabbit')
+    except Exception as e:
+        logger.error(f'Ошибка подключения к Rabbit: {str(e)}')
+        return
+
+    try:
+        await consume_messages()
+    finally:
+        await logging_service.close()
+        logger.info('Подключение к Rabbit остановлено!')
 
 
 if __name__ == '__main__':

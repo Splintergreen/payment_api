@@ -92,6 +92,8 @@ services:
   api:
     container_name: payments_payment_api
     build: ./payment_api
+    volumes:
+      - ./rabbit_logging:/app/rabbit_logging
     image: payments_api:latest
     ports:
       - "8000:8000"
@@ -110,18 +112,24 @@ services:
   fraud_detection:
     container_name: payments_fraud_detection
     build: ./fraud_detection
+    volumes:
+      - ./rabbit_logging:/app/rabbit_logging
     image: payments_fraud_detection:latest
     restart: always
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
     depends_on:
       - kafka
+      - postgres
+      - rabbitmq
     networks:
       - payments-net
 
   analytics:
     container_name: payments_analytics
     build: ./analytics
+    volumes:
+      - ./rabbit_logging:/app/rabbit_logging
     image: payments_analytics:latest
     restart: always
     environment:

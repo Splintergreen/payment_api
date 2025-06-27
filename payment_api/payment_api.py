@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Depends, Request
-from logger import logging_service
 from aiokafka import AIOKafkaProducer
 import redis.asyncio as redis
 import json
@@ -10,6 +9,7 @@ from datetime import datetime
 import logging
 from uuid import uuid4
 from schemes import PaymentRequest
+from rabbit_logging import logging_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -70,6 +70,7 @@ async def log_event(level: str, message: str, request: Request, **extra):
         level,
         message,
         request_id=request_id,
+        service='payment_api',
         **extra
     )
 
@@ -79,7 +80,7 @@ async def validate_card(card_number: str, redis_client: redis.Redis, request: Re
     cached = await redis_client.get(cache_key)
 
     if cached:
-        await log_event("INFO", f'Карта {card_number[:6]} возвращена из кеша!', request, cached_result=cached)
+        await log_event('INFO', f'Карта {card_number[:6]} возвращена из кеша!', request, cached_result=cached)
         return cached == '1'
 
     is_valid = card_number.startswith(('4', '5')) and len(card_number) in (15, 16)
@@ -105,7 +106,8 @@ async def process_payment(payment: PaymentRequest, request: Request):
         'currency': payment.currency,
         'card_mask': payment.card_number[-4:],
         'status': 'processing',
-        'send_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        'send_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'request_id': request.state.request_id
     }
 
     try:
