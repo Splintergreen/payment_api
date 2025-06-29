@@ -155,6 +155,18 @@ services:
     networks:
       - payments-net
 
+  logstash:
+    image: logstash:8.12.0
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    environment:
+      - XPACK_MONITORING_ENABLED=false
+    depends_on:
+      - rabbitmq
+      - elasticsearch
+    networks:
+      - payments-net
+
   elasticsearch:
     image: elasticsearch:8.12.0
     container_name: elasticsearch
